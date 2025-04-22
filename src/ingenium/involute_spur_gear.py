@@ -313,7 +313,6 @@ class InvoluteSpurGear:
         bpy.context.view_layer.objects.active = gear_object
         gear_object.select_set(True)
 
-
         print(f"Successfully created Blender object: '{object_name}'")
         # --- End of BPY Code ---
 
