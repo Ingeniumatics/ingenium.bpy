@@ -91,7 +91,7 @@ class InvoluteSpurGear:
         if self.theta_max <= 1e-9:
              return [(self.base_radius, 0.0, 0.0)] if self.base_radius > 0 else []
 
-        involute_points = []
+        involute_points: list[tuple[float, float, float]] = []
         for i in range(num_points + 1):
             theta = (i / num_points) * self.theta_max
             point = self._calculate_involute_point(theta)
@@ -121,7 +121,7 @@ class InvoluteSpurGear:
         Generates points for a circular arc fillet between two approximate points.
         NOTE: This is NOT mathematically correct for tangent blending.
         """
-        fillet_points = []
+        fillet_points: list[tuple[float, float, float]] = []
         # --- Very Basic Placeholder Logic ---
         center_x = self.effective_root_radius * math.cos(slot_center_angle_rad)
         center_y = self.effective_root_radius * math.sin(slot_center_angle_rad)
@@ -200,21 +200,19 @@ class InvoluteSpurGear:
         if not fillet_points: return []
 
         # 6. Combine lists locally: Flank B (Tip->Root) + Fillet Points + Flank A (Root->Tip)
-        combined_profile_local = []
+        combined_profile_local: list[tuple[float, float, float]] = []
         if involute_B_final: combined_profile_local.extend(involute_B_final)
 
         # Add fillet points, avoiding duplicate start point if possible (using approx comparison)
         if fillet_points:
-            if combined_profile_local and \
-               math.dist(fillet_points[0][:2], combined_profile_local[-1][:2]) < 1e-6:
+            if combined_profile_local and (math.dist(fillet_points[0][:2], combined_profile_local[-1][:2]) < 1e-6):
                 combined_profile_local.extend(fillet_points[1:])
             else:
                 combined_profile_local.extend(fillet_points)
 
         # Add flank A points, avoiding duplicate start point
         if involute_A_rotated:
-            if combined_profile_local and \
-               math.dist(involute_A_rotated[0][:2], combined_profile_local[-1][:2]) < 1e-6:
+            if combined_profile_local and (math.dist(involute_A_rotated[0][:2], combined_profile_local[-1][:2]) < 1e-6):
                 combined_profile_local.extend(involute_A_rotated[1:])
             else:
                 combined_profile_local.extend(involute_A_rotated)
@@ -241,7 +239,7 @@ class InvoluteSpurGear:
                                              The list forms a closed loop (ideally).
         """
         print(f"\nGenerating full gear profile vertices (N={self.num_teeth})...")
-        all_vertices = []
+        all_vertices: list[tuple[float, float, float]] = []
         for i in range(self.num_teeth):
             # Calculate the center angle for this tooth space
             # We align the *space* center, assuming tooth thickness = space width at pitch
@@ -260,13 +258,13 @@ class InvoluteSpurGear:
                  print(f"Warning: Empty profile generated for slot {i}. Skipping.")
                  continue
 
-            if all_vertices and math.dist(all_vertices[-1][:2], slot_profile[0][:2]) < 1e-6:
+            if all_vertices and (math.dist(all_vertices[-1][:2], slot_profile[0][:2]) < 1e-6):
                  all_vertices.extend(slot_profile[1:]) # Skip first point if it's same as last
             else:
                  all_vertices.extend(slot_profile)
 
         # Optional: Check if the loop is closed (last point == first point)
-        if all_vertices and math.dist(all_vertices[-1][:2], all_vertices[0][:2]) < 1e-6:
+        if all_vertices and (math.dist(all_vertices[-1][:2], all_vertices[0][:2]) < 1e-6):
              print("  Loop closed successfully (last point matches first point).")
              # Optionally remove the last point if it's a duplicate of the first
              # all_vertices.pop()
@@ -278,7 +276,7 @@ class InvoluteSpurGear:
         
         return all_vertices
     
-    def to_mesh(self, name, module, num_teeth, pressure_angle_deg):
+    def to_mesh(self, name: str, module: float, num_teeth: int, pressure_angle_deg: float):
         gear = InvoluteSpurGear(module, num_teeth, pressure_angle_deg)
         print("-" * 20)
 

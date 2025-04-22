@@ -1,0 +1,23 @@
+version = 1
+revision = 1
+requires-python = ">=3.12"
+
+[[package]]
+name = "fake-bpy-module"
+version = "20250421"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/fa/60/0180eb0ca86fcca0fa623e5b670c59c840c369f4540e5e3a9c669f0ea57d/fake_bpy_module-20250421.tar.gz", hash = "sha256:fe4559e8acc5489b9b046b0cc9e3d19901f6b75ce311c4d87b1e6f7db12295cd", size = 959759 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/03/9f/7d834d28870ef958f16e952cb962f64da3c71f7f7d98b8f7fa096ff53345/fake_bpy_module-20250421-py3-none-any.whl", hash = "sha256:2446bc83904281322e977a14995c8a6913c5beca96520f9d1b5f15a619bf83bc", size = 1084751 },
+]
+
+[[package]]
+name = "ingenium"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "fake-bpy-module" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "fake-bpy-module", specifier = ">=20250421" }]
