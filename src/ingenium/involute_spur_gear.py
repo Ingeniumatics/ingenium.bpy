@@ -1,347 +1,327 @@
 import math
+
 import bpy
+import numpy
+
+from rustipy.option import Option, Some, Nothing
 
 class InvoluteSpurGear:
+    """
+    Stores input parameters and calculates derived geometric properties for an involute spur gear.
+    This class does not interact with Blender.
+    """
     def __init__(self, module: float, num_teeth: int, pressure_angle_deg: float):
         """
-        Initializes the gear generator with basic parameters.
+        Initializes gear parameters and calculates derived values.
 
         Args:
-            module (float): Gear module (e.g., in mm).
-            num_teeth (int): Number of teeth. Must be >= 3.
-            pressure_angle_deg (float): Pressure angle in degrees (e.g., 20.0).
+            module (float): Gear module. Must be positive.
+            num_teeth (int): Number of teeth. Must be 3 or greater.
+            pressure_angle_deg (float): Pressure angle in degrees. Must be between 0 (exclusive) and 90 (exclusive).
 
         Raises:
             ValueError: If input parameters are invalid.
         """
         # --- Validate Inputs ---
-        if num_teeth < 3:
-            # Ensure a minimum number of teeth for valid geometry
-            raise ValueError("Number of teeth must be 3 or greater.")
         if module <= 0:
-            # Module must be a positive value
             raise ValueError("Module must be positive.")
+        if num_teeth < 3:
+            # Technically possible, but practically unusual and can lead to undercut issues
+            # raise ValueError("Number of teeth must be 3 or greater for practical gears.")
+            print("Warning: Number of teeth is less than 3, which is highly unusual.")
         if pressure_angle_deg <= 0 or pressure_angle_deg >= 90:
-             # Pressure angle must be within a reasonable range
-             raise ValueError("Pressure angle must be between 0 and 90 degrees.")
+             raise ValueError("Pressure angle must be between 0 (exclusive) and 90 (exclusive) degrees.")
 
         # --- Store Base Parameters ---
         self.module: float = module
         self.num_teeth: int = num_teeth
         self.pressure_angle_deg: float = pressure_angle_deg
-        # Convert pressure angle to radians for trigonometric functions
-        self.pressure_angle_rad: float = math.radians(pressure_angle_deg)
+        self.pressure_angle_rad: float = numpy.radians(pressure_angle_deg)
 
         # --- Calculate Core Geometric Parameters ---
-
-        # Pitch circle calculations: The fundamental circle defining gear size
+        # Pitch diameter and radius
         self.pitch_diameter: float = self.module * self.num_teeth
         self.pitch_radius: float = self.pitch_diameter / 2.0
 
-        # Base circle radius: The circle from which the involute curve is generated
-        self.base_radius: float = self.pitch_radius * math.cos(self.pressure_angle_rad)
-        # Check if base radius is valid (can become near zero with extreme parameters)
-        if self.base_radius <= 1e-9:
-            raise ValueError(
-                f"Base radius ({self.base_radius:.4f}) is too small or zero. "
-                f"Check parameters (num_teeth={num_teeth}, pressure_angle={pressure_angle_deg} deg)."
-            )
+        # Base circle radius
+        self.base_radius: float = self.pitch_radius * numpy.cos(self.pressure_angle_rad)
 
-        # Standard tooth dimensions (based on module)
-        # These define the radial extent of the teeth
-        # Note: These are standard values; non-standard gears might use different factors.
-        self.addendum: float = 1.0 * self.module # Radial distance from pitch circle to tooth tip
-        self.dedendum: float = 1.25 * self.module # Radial distance from pitch circle to nominal root
+        # Standard tooth dimensions (based on ISO 53 or similar standards)
+        # Addendum (height from pitch circle to tip circle)
+        self.addendum: float = 1.0 * self.module # Standard addendum factor ha* = 1.0
+        # Clearance factor (for space at the bottom of the tooth gap)
+        self.clearance_factor: float = 0.25 # Standard clearance factor c* = 0.25
+        # Clearance (radial distance between root circle of one gear and tip circle of mating gear)
+        self.clearance: float = self.clearance_factor * self.module
+        # Dedendum (depth from pitch circle to root circle)
+        # hf = ha + c = (ha* + c*) * m
+        self.dedendum: float = self.addendum + self.clearance # Typically 1.25 * module
 
-        # Tip circle radius: The outermost radius of the gear teeth
-        self.tip_radius: float = self.pitch_radius + self.addendum
-        # Root circle radius: The nominal radius at the bottom of the tooth space
-        self.root_radius: float = self.pitch_radius - self.dedendum
+        # Tip circle radius (outer radius)
+        self.tip_radius: float = self.pitch_radius + self.addendum # Ra = Rp + ha
 
-        # Check for potential undercut condition
-        if self.root_radius < self.base_radius:
-            # This warning indicates that the theoretical root circle lies inside the base circle.
-            # The involute profile cannot exist below the base circle.
-            # The actual root fillet (trochoid) will start from the base circle.
-            # This condition often implies undercut during manufacturing.
-            print(f"Warning: Calculated root radius {self.root_radius:.4f} is below base radius {self.base_radius:.4f}. Potential undercut.")
-
-        # --- Calculate Angular Parameters ---
-
-        # Angle subtended by one tooth and one space at the gear center
-        self.tooth_pitch_angle: float = (2 * math.pi) / self.num_teeth
-        # Angular thickness of a tooth on the pitch circle
-        # Standard assumption: tooth thickness equals space width on the pitch circle
-        self.tooth_angle_on_pitch: float = self.tooth_pitch_angle / 2.0
-        # Angular width of a space between teeth on the pitch circle
-        self.space_angle_on_pitch: float = self.tooth_pitch_angle / 2.0
-
-        # --- Calculate Involute Generation Angle Limit ---
-
-        # Maximum roll angle (theta) required to generate the involute curve
-        # up to the tip radius. Derived from the involute equation:
-        # radius = base_radius * sqrt(1 + theta^2)
-        self.theta_max: float = 0.0 # Initialize theta_max
-        # Ensure base_radius is positive to avoid division by zero or math domain error
-        if self.base_radius > 1e-9:
-             # Calculate the squared ratio of tip radius to base radius
-             tip_radius_ratio_sq = (self.tip_radius / self.base_radius) ** 2
-             # Check if tip circle is outside base circle (it should be)
-             if tip_radius_ratio_sq < (1.0 - 1e-9): # Use tolerance for float comparison
-                 # This indicates an error in parameters or calculations
-                 print(f"Error: Tip radius {self.tip_radius:.4f} seems smaller than base radius {self.base_radius:.4f}. Cannot calculate theta_max.")
-                 # Optionally, raise an error instead of just printing
-                 # raise ValueError("Invalid geometry: Tip radius is smaller than base radius.")
-             else:
-                 # Ensure the argument for sqrt is non-negative
-                 sqrt_arg = max(0.0, tip_radius_ratio_sq - 1.0)
-                 self.theta_max = math.sqrt(sqrt_arg)
-        # else: base_radius is near zero, theta_max remains 0 (already handled by earlier check)
-
-        # --- Debug Prints (Optional) ---
-        # print(f"Debug: module={self.module}, num_teeth={self.num_teeth}, pressure_angle={self.pressure_angle_deg}")
-        # print(f"Debug: pitch_radius={self.pitch_radius:.4f}, base_radius={self.base_radius:.4f}")
-        # print(f"Debug: tip_radius={self.tip_radius:.4f}, root_radius={self.root_radius:.4f}")
-        # print(f"Debug: theta_max={math.degrees(self.theta_max):.2f} deg")
+        # Root circle radius (inner radius of tooth space)
+        self.root_radius: float = self.pitch_radius - self.dedendum # Rf = Rp - hf
+        # Ensure root radius is not negative, although this is unlikely with standard parameters
+        if self.root_radius < 0:
+             print(f"Warning: Calculated root radius ({self.root_radius:.4f}) is negative. Clamping to 0.")
+             self.root_radius = 0.0
 
 
-    def _calculate_involute_point(self, theta: float) -> tuple[float, float, float]:
+        # --- Calculate Max Involute Roll Angle (theta_max) ---
+        # This is the roll angle 'theta' where the involute curve intersects the tip circle.
+        self.theta_max: float = 0.0
+        # Check if tip radius is significantly greater than base radius before sqrt
+        # Use a small tolerance for floating point comparisons
+        if self.tip_radius > self.base_radius + 1e-9:
+            # Formula derived from R^2 = Rb^2 * (1 + theta^2)
+            # => theta = sqrt((R/Rb)^2 - 1) where R is the radius of interest (tip_radius here)
+            tip_radius_ratio_sq: float = (self.tip_radius / self.base_radius) ** 2
+            # Ensure the argument to sqrt is non-negative due to potential floating point inaccuracies
+            sqrt_arg: float = max(0.0, tip_radius_ratio_sq - 1.0)
+            self.theta_max = numpy.sqrt(sqrt_arg)
+        elif abs(self.tip_radius - self.base_radius) < 1e-9:
+             # If tip radius is effectively equal to base radius, the involute starts and ends at the same point.
+             self.theta_max = 0.0
+        else:
+             # This case (tip_radius < base_radius) should not happen with standard gear parameters
+             # where addendum > 0 and pressure_angle < 90.
+             print(f"Warning: Tip radius ({self.tip_radius:.4f}) is less than base radius ({self.base_radius:.4f}). This indicates unusual parameters or potential undercut issues. Setting theta_max to 0.")
+             self.theta_max = 0.0
+
+        # --- Calculate other useful angles (in radians) ---
+        # Pitch angle: Angle subtended by one tooth and one space at the center
+        self.pitch_angle: float = 2.0 * numpy.pi / self.num_teeth
+        # Tooth angle: Angle subtended by one tooth at the pitch circle
+        # Assuming standard tooth thickness = half the pitch angle at the pitch circle
+        self.tooth_angle_at_pitch: float = self.pitch_angle / 2.0
+        # Space angle: Angle subtended by one space at the pitch circle
+        self.space_angle_at_pitch: float = self.pitch_angle / 2.0
+
+        # Involute function (inv alpha) at the pressure angle
+        self.inv_alpha: float = numpy.tan(self.pressure_angle_rad) - self.pressure_angle_rad
+
+        # Angle phi: Angle from the start of the involute (on base circle) to the point where
+        # the involute intersects the pitch circle. phi = tan(alpha) - alpha = inv(alpha)
+        self.phi_at_pitch: float = self.inv_alpha
+
+        # Angle delta: Half the tooth angle at the base circle.
+        # This angle positions the center of the tooth flank relative to the starting point of the involute.
+        # delta = (Tooth Angle at Pitch Circle / 2) + inv(alpha)
+        # delta = (pi / (2 * N)) + inv(alpha)
+        self.delta_at_base: float = (numpy.pi / (2.0 * self.num_teeth)) + self.inv_alpha
+
+        print("--- Gear Parameters Initialized ---")
+        print(f"  Module: {self.module}")
+        print(f"  Num Teeth: {self.num_teeth}")
+        print(f"  Pressure Angle: {self.pressure_angle_deg} deg")
+        print(f"  Pitch Radius: {self.pitch_radius:.4f}")
+        print(f"  Base Radius: {self.base_radius:.4f}")
+        print(f"  Tip Radius: {self.tip_radius:.4f}")
+        print(f"  Root Radius: {self.root_radius:.4f}")
+        print(f"  Addendum: {self.addendum:.4f}")
+        print(f"  Dedendum: {self.dedendum:.4f}")
+        print(f"  Theta Max (Tip): {self.theta_max:.4f} rad")
+        print(f"  Delta at Base: {self.delta_at_base:.4f} rad")
+        print("------------------------------------")
+
+    def guideline(self) -> 'GearGuidelineGenerator':
+        return GearGuidelineGenerator(self)
+
+    def mesh(self, name: str) -> 'GearMeshGenerator':
+        return GearMeshGenerator(self)
+
+class GearGuidelineGenerator:
+    def __init__(self, gear: InvoluteSpurGear):
+        self.gear = gear
+
+    def _create_circle_guideline(self, radius: float, guideline_name: str) -> Option[bpy.types.Object]:
         """
-        Calculates the (x, y, z) coordinates of a point on the involute curve
-        for a given roll angle theta, relative to the base circle center.
-        The curve starts at (base_radius, 0) for theta = 0.
+        Creates a Bezier circle curve object using bpy.ops.
+        Minimal implementation without exception handling or context management.
 
         Args:
-            theta (float): The roll angle in radians (angle unwrapped from base circle).
-                           Must be non-negative.
+            radius (float): The radius of the circle guideline.
+            guideline_name (str): Name for the guideline object.
 
         Returns:
-            tuple[float, float, float]: The (x, y, z) coordinates of the point. z is always 0.
-
-        Raises:
-            ValueError: If theta is negative.
+            Option[bpy.types.Object]: Some(Object) if successful, Nothing otherwise.
         """
-        if theta < -1e-9: # Allow for small floating point inaccuracies near zero
-            raise ValueError(f"Theta ({theta}) cannot be negative for involute calculation.")
+        # 1. Validate radius
+        if radius <= 1e-9:
+            print(f"Error creating '{guideline_name}': Radius ({radius:.4f}) is too small or zero.")
+            return Nothing()
 
-        # Clamp theta near zero if it's very slightly negative due to float issues
-        theta = max(0.0, theta)
-
-        # Standard involute parametric equations
-        x = self.base_radius * (math.cos(theta) + theta * math.sin(theta))
-        y = self.base_radius * (math.sin(theta) - theta * math.cos(theta))
-        return (x, y, 0.0)
-
-    def _get_involute_profile_points(self, num_points: int) -> list[tuple[float, float, float]]:
-        """
-        Generates a list of points defining one side of the tooth profile
-        using the involute curve, from the base circle up to the tip circle.
-
-        Args:
-            num_points (int): The number of points to generate along the curve segment
-                              (excluding the start point, so num_points=10 gives 11 points total).
-                              Must be >= 1.
-
-        Returns:
-            list[tuple[float, float, float]]: A list of (x, y, z) points defining the involute profile.
-                                             The list starts at the base circle (theta=0) and ends
-                                             at or near the tip circle (theta=theta_max).
-                                             Returns an empty list if num_points < 1 or theta_max is invalid.
-        """
-        if num_points < 1:
-            print("Warning: num_points must be >= 1 to generate involute profile. Returning empty list.")
-            return []
-        if self.theta_max <= 1e-9: # Check if theta_max is valid (calculated in __init__)
-             print(f"Warning: theta_max ({self.theta_max:.4f}) is too small. Cannot generate involute profile. Returning empty list.")
-             return []
-
-        # Generate theta values from 0 to theta_max using a generator expression
-        # We need num_points + 1 total points (including start and end)
-        thetas = ((i / num_points) * self.theta_max for i in range(num_points + 1))
-
-        # Calculate involute points for each theta using another generator expression
-        # and collect them into a list
-        involute_points: list[tuple[float, float, float]] = [
-            self._calculate_involute_point(theta) for theta in thetas
-        ]
-
-        return involute_points
-
-    def _rotate_point(self, point: tuple[float, float, float], angle_rad: float) -> tuple[float, float, float]:
-        """Rotates a 2D point (x, y) around the origin by a given angle."""
-        x, y, z = point
-        cos_a = math.cos(angle_rad)
-        sin_a = math.sin(angle_rad)
-        new_x = x * cos_a - y * sin_a
-        new_y = x * sin_a + y * cos_a
-        return (new_x, new_y, z)
-    
-    def _generate_single_tooth_slot_profile(
-        self,
-        slot_center_angle_rad: float, # Center angle of the space BETWEEN teeth
-        num_profile_points: int # Number of points for EACH involute flank
-    ) -> list[tuple[float, float, float]]:
-        """
-        Generates vertices for a single tooth slot profile, consisting of two
-        involute flanks. The root fillet points are NOT generated by this method
-        and should be calculated and inserted separately (e.g., using trochoid).
-
-        Points are ordered roughly from Tip of preceding flank -> Root of preceding flank,
-        then Root of succeeding flank -> Tip of succeeding flank.
-        The profile is generated locally around the X-axis and then rotated by slot_center_angle_rad.
-
-        Args:
-            slot_center_angle_rad (float): The global angle (in radians) to center this slot profile.
-            num_profile_points (int): Number of points to generate for each involute flank segment
-                                      (must be >= 1).
-
-        Returns:
-            list[tuple[float, float, float]]: A list of (x, y, z) points defining the two flanks
-                                             of the tooth slot. Returns empty list on error.
-        """
-        if num_profile_points < 1:
-             print("Error: num_profile_points must be >= 1. Cannot generate slot profile.")
-             return []
-
-        # 1. Calculate base involute profile (Flank A - local coords, starts on X-axis at base circle)
-        #    Points are ordered Root -> Tip
-        involute_A_local = self._get_involute_profile_points(num_points=num_profile_points)
-        if not involute_A_local or len(involute_A_local) < 2:
-            # Error message already printed by _get_involute_profile_points if needed
-            print("Error: Failed to generate base involute profile for slot.")
-            return []
-
-        # 2. Determine rotation angles for flanks relative to the slot center (X-axis locally)
-        #    Calculation based on involute properties at the pitch circle to ensure correct tooth thickness
-        #    inv_alpha: Angle between radius to involute start (on base circle) and radius to point on pitch circle
-        inv_pressure_angle = math.tan(self.pressure_angle_rad) - self.pressure_angle_rad
-        #    half_tooth_angle_at_pitch: Half the angular thickness of the tooth on the pitch circle
-        half_tooth_angle_at_pitch = self.tooth_angle_on_pitch / 2.0
-        #    base_angle_shift: Angle from the center of the tooth flank (on pitch circle)
-        #                      to the start of the involute curve (on base circle)
-        base_angle_shift = half_tooth_angle_at_pitch + inv_pressure_angle # Corrected calculation
-
-        # Angle to rotate Flank A (starts locally on X-axis) to position it correctly.
-        # Flank A forms the *leading* side of the tooth (trailing side of the space).
-        # It needs to be rotated counter-clockwise from the slot center.
-        rotate_A = base_angle_shift
-
-        # Angle to rotate mirrored Flank B.
-        # Flank B forms the *trailing* side of the tooth (leading side of the space).
-        # It needs to be rotated clockwise from the slot center.
-        rotate_B = -base_angle_shift # Mirrored rotation
-
-        # 3. Create Rotated Flank A (Root -> Tip)
-        flank_A_rotated = [self._rotate_point(p, rotate_A) for p in involute_A_local]
-
-        # 4. Create Rotated Flank B (Tip -> Root)
-        #    Mirror the original local profile across the X-axis
-        involute_B_local_mirrored = [(p[0], -p[1], p[2]) for p in involute_A_local]
-        #    Rotate the mirrored profile
-        flank_B_rotated = [self._rotate_point(p, rotate_B) for p in involute_B_local_mirrored]
-        #    Reverse the order so it goes from Tip -> Root
-        flank_B_final = list(reversed(flank_B_rotated))
-
-        # 5. Combine Flanks (Fillet points are missing here!)
-        #    The order is: Flank B (Tip -> Root) followed by Flank A (Root -> Tip)
-        #    A gap exists between flank_B_final[-1] and flank_A_rotated[0] where the fillet should be.
-        combined_profile_local: list[tuple[float, float, float]] = []
-        combined_profile_local.extend(flank_B_final)
-        # --- Placeholder for Trochoid Fillet Insertion ---
-        # fillet_points = self._calculate_trochoid_fillet_points(
-        #     start_flank_point=flank_B_final[-1], # End of Flank B (Root)
-        #     end_flank_point=flank_A_rotated[0],  # Start of Flank A (Root)
-        #     num_points=...
-        # )
-        # combined_profile_local.extend(fillet_points) # Add fillet points here
-        # -------------------------------------------------
-        combined_profile_local.extend(flank_A_rotated)
-
-        # 6. Rotate the entire profile to the specified global slot_center_angle_rad
-        final_profile = [self._rotate_point(p, slot_center_angle_rad) for p in combined_profile_local]
-
-        return final_profile
-
-    # ... rest of the class ...
-
-    # def _calculate_circular_root_fillet_points(...): # This method is now obsolete/removed
-
-    # ... (Need to add _calculate_trochoid_fillet_points later) ...
-
-    def generate_gear_points(self, num_profile_points_per_flank: int = 20) -> list[tuple[float, float, float]]:
-        """
-        Generates all vertex points for the gear profile by combining multiple
-        tooth slot profiles.
-
-        Args:
-            num_profile_points_per_flank (int): Number of points for each involute flank segment.
-
-        Returns:
-            list[tuple[float, float, float]]: A list of (x, y, z) points for the complete gear outline.
-        """
-        all_gear_points: list[tuple[float, float, float]] = []
-        for i in range(self.num_teeth):
-            # Calculate the center angle for each tooth *space*
-            slot_center_angle = i * self.tooth_pitch_angle
-            single_slot_profile = self._generate_single_tooth_slot_profile(
-                slot_center_angle_rad=slot_center_angle,
-                num_profile_points=num_profile_points_per_flank
-            )
-            if single_slot_profile:
-                # Avoid duplicating the connection point between slots if possible
-                if all_gear_points and single_slot_profile:
-                     # Check if the start of the new profile is close to the end of the previous one
-                     if math.dist(all_gear_points[-1][:2], single_slot_profile[0][:2]) < 1e-6:
-                         all_gear_points.extend(single_slot_profile[1:]) # Skip duplicate point
-                     else:
-                         all_gear_points.extend(single_slot_profile)
-                else:
-                    all_gear_points.extend(single_slot_profile)
-            else:
-                print(f"Warning: Failed to generate profile for slot {i}. Skipping.")
-
-        # Close the loop by connecting the last point to the first point if they are not the same
-        if all_gear_points and len(all_gear_points) > 1:
-             if math.dist(all_gear_points[-1][:2], all_gear_points[0][:2]) > 1e-6:
-                 # This might indicate an issue if the profile isn't naturally closing
-                 print("Warning: Gear profile loop doesn't seem closed. Check calculations.")
-                 # Optionally, add the first point again to force closure, but it's better to fix the root cause
-                 # all_gear_points.append(all_gear_points[0])
-             else:
-                 # Remove the last point if it's identical to the first (avoids duplicate vertex)
-                 all_gear_points.pop()
-
-
-        return all_gear_points
-
-    def to_mesh(self, name: str, module: float, num_teeth: int, pressure_angle_deg: float):
-        gear = InvoluteSpurGear(module, num_teeth, pressure_angle_deg)
-        print("-" * 20)
-
-        # 2. Generate vertices for the full 2D profile
-        num_profile_points = 20
-        num_fillet_points = 10
-        gear_vertices = gear.generate_gear_points(
-            num_profile_points_per_flank=num_profile_points
+        # 2. Create the circle using bpy.ops
+        bpy.ops.curve.primitive_bezier_circle_add( # type: ignore , bpy Type Generator Error. 
+            radius=radius,
+            enter_editmode=False,
+            align='WORLD',
+            location=(0, 0, 0),
+            scale=(1, 1, 1)
         )
 
-        mesh_name = "GeneratedGearMesh"
-        mesh_data = bpy.data.meshes.new(mesh_name)
+        # 3. Get the newly created object (assumed to be the active one)
+        created_obj = bpy.context.active_object
+        if created_obj is None:
+            print(f"Error: Failed to get active object after creating '{guideline_name}'.")
+            return Nothing() # Return Nothing if object not found
 
-        num_verts = len(gear_vertices)
-        edges = [[i, (i + 1) % num_verts] for i in range(num_verts)]
-        faces = [list(range(num_verts))]
+        # 4. Rename the object
+        created_obj.name = guideline_name
+        if created_obj.data:
+            created_obj.data.name = f"{guideline_name}_Data"
 
-        mesh_data.from_pydata(gear_vertices, edges, faces)
-        mesh_data.update() # Ensure mesh data is valid
+        print(f"Successfully created object '{guideline_name}' using bpy.ops.")
+        
+        return Some(created_obj) # Return the created object wrapped in Some
 
-        object_name = name
-        gear_object = bpy.data.objects.new(object_name, mesh_data)
+    def _create_line_guideline(self, start_point: tuple[float, float, float], end_point: tuple[float, float, float], guideline_name: str) -> Option[bpy.types.Object]:
+        """
+        Creates a simple straight line curve object using bpy.data.
+        Minimal implementation.
 
-        bpy.context.collection.objects.link(gear_object) # error due to .collection variable could be None
-        bpy.context.view_layer.objects.active = gear_object # error due to .view_layer variable could be None
+        Args:
+            start_point (tuple[float, float, float]): The starting coordinate (x, y, z).
+            end_point (tuple[float, float, float]): The ending coordinate (x, y, z).
+            guideline_name (str): Name for the guideline object.
 
-        gear_object.select_set(True)
+        Returns:
+            Option[bpy.types.Object]: Some(Object) if successful, Nothing otherwise.
+        """
+        curve_data = None
+        try:
+            # 1. Create new Curve Data
+            curve_data = bpy.data.curves.new(name=f"{guideline_name}_Data", type='CURVE')
+            curve_data.dimensions = '3D'
 
-        print(f"Successfully created Blender object: '{object_name}'")
+            # 2. Create a new Spline (Poly type)
+            spline = curve_data.splines.new('POLY')
 
+            # 3. Add points to the spline
+            spline.points.add(1) # type: ignore , bpy Type Generator Error. # Add 1 point (total 2 points for a line segment)
+            spline.points[0].co = (*start_point, 1.0) # W coordinate is 1.0 for Poly
+            spline.points[1].co = (*end_point, 1.0)
+
+            # 4. Create the Object using the Curve Data
+            guideline_object = bpy.data.objects.new(guideline_name, curve_data)
+
+            print(f"Successfully created line object data: '{guideline_name}'")
+            return Some(guideline_object)
+
+        except Exception as e:
+            print(f"An unexpected error occurred during '{guideline_name}' line creation: {e}")
+            if curve_data is not None and curve_data.name in bpy.data.curves:
+                 bpy.data.curves.remove(curve_data) # type: ignore , bpy Type Generator Error. 
+            return Nothing()
+
+    def draw(self) -> list[bpy.types.Object]:
+        """
+        Creates and links the main circular guidelines to the current scene collection.
+        Handles potential errors by returning only successfully linked objects.
+
+        Returns:
+            list[bpy.types.Object]: A list of the guideline objects successfully linked to the scene.
+        """
+        print("\n--- Drawing Circular Guidelines ---")
+        linked_objects: list[bpy.types.Object] = []
+        objects_to_cleanup: list[bpy.types.Object] = [] # Store objects created but not linked
+
+        # 1. Define guidelines to create
+        guidelines_spec = {
+            "Base Circle Guideline": self.gear.base_radius,
+            "Pitch Circle Guideline": self.gear.pitch_radius,
+            "Root Circle Guideline": self.gear.root_radius,
+            "Tip Circle Guideline": self.gear.tip_radius,
+        }
+
+        # 2. Create guideline objects
+        created_options: dict[str, Option[bpy.types.Object]] = {
+            name: self._create_circle_guideline(radius, name)
+            for name, radius in guidelines_spec.items()
+        }
+
+        # --- Immediate Check after Creation ---
+        # Check if the objects were automatically linked by bpy.ops
+        collection_for_check = bpy.context.collection
+        if collection_for_check is not None:
+            print(f"DEBUG: Immediately checking collection '{collection_for_check.name}' after object creation...")
+            for name, option in created_options.items():
+                if option.is_some():
+                    obj_ref = option.unwrap()
+                    # Check only by name, as checking by reference causes TypeError
+                    # Removed the try...except ReferenceError block and is_in_collection_by_ref
+                    is_in_collection_by_name = name in collection_for_check.objects
+                    print(f"DEBUG: Object '{name}' ({obj_ref.name}) - In collection by name? {is_in_collection_by_name}") # Updated print
+        else:
+            print("DEBUG: Cannot perform immediate check, no active collection.")
+        # --- End Immediate Check ---
+
+        # 3. Check for active collection (this might seem redundant now, but keep for safety)
+        collection = bpy.context.collection
+        if collection is None:
+            print("Error: No active collection found. Cannot link guidelines.")
+            # Add all successfully created objects to cleanup list
+            for option in created_options.values():
+                if option.is_some():
+                    objects_to_cleanup.append(option.unwrap())
+        else:
+            # 4. Link/Verify successfully created objects if collection exists
+            print(f"Attempting to link/verify guidelines in collection: '{collection.name}'") # Modified print
+            for name, option in created_options.items():
+                if option.is_some():
+                    obj = option.unwrap()
+                    # Check if the object (by name) is already in the collection
+                    existing_obj_in_collection = collection.objects.get(name) # Use get()
+
+                    if existing_obj_in_collection is not None:
+                        # An object with this name exists in the collection.
+                        # Check if it's the one we just created.
+                        if existing_obj_in_collection == obj:
+                            # Yes, it's the same object. bpy.ops likely auto-linked it.
+                            print(f"Object '{name}' already linked (likely by bpy.ops). Ensuring visibility.")
+                            existing_obj_in_collection.hide_viewport = False # Ensure visible
+                            linked_objects.append(existing_obj_in_collection)
+                            # DO NOT add to objects_to_cleanup
+                        else:
+                            # An OLD object with the same name exists. The new 'obj' is redundant.
+                            print(f"An older object named '{name}' exists. Cleaning up the newly created duplicate.")
+                            objects_to_cleanup.append(obj) # Add the NEW object 'obj' to cleanup
+                    else:
+                        # Object name is not in the collection, link the new object 'obj'
+                        try:
+                            print(f"Linking new object '{name}' to collection '{collection.name}'.")
+                            collection.objects.link(obj) # type: ignore , bpy Type Generator Error. 
+                            obj.hide_viewport = False # Ensure visible
+                            linked_objects.append(obj)
+                            print(f"Successfully linked '{name}'.")
+                        except Exception as link_e:
+                            print(f"Error linking '{name}': {link_e}")
+                            objects_to_cleanup.append(obj) # Add to cleanup if linking failed
+                # else: object creation failed, already printed in _create_circle_guideline
+
+        # 5. Clean up objects that were created but not linked or were duplicates of OLD objects
+        if objects_to_cleanup:
+            print(f"Cleaning up {len(objects_to_cleanup)} unlinked or duplicate guideline objects...")
+            for obj_clean in objects_to_cleanup:
+                if obj_clean.name in bpy.data.objects:
+                    # Check if the object reference is still valid and matches the one in bpy.data
+                    if obj_clean == bpy.data.objects.get(obj_clean.name):
+                        try:
+                            bpy.data.objects.remove(obj_clean, do_unlink=True) # type: ignore , bpy Type Generator Error. 
+                        except Exception as remove_e:
+                            print(f"Error removing '{obj_clean.name}': {remove_e}")
+                    else:
+                         print(f"Warning: Object reference mismatch for '{obj_clean.name}' during cleanup. Skipping removal.")
+                # else: Object already removed or never properly created
+
+        print(f"--- Finished Drawing Circular Guidelines: {len(linked_objects)} linked. ---")
+        return linked_objects # Return the list of successfully linked objects
+
+
+class GearMeshGenerator:
+    def __init__(self, gear: InvoluteSpurGear):
+        self.gear = gear
+
+    def draw(self):
+        pass
